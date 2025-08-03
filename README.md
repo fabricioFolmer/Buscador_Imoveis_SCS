@@ -1,5 +1,4 @@
-# Real Estate Scraper - Sistema de Análise Imobiliária
-
+# Buscador de Imóveis - Santa Cruz do Sul
 Este projeto é uma solução completa para coleta, processamento e visualização de dados imobiliários da região de Santa Cruz do Sul/RS. O sistema inclui web scrapers para extração de dados de múltiplas imobiliárias e uma interface web interativa desenvolvida em Streamlit para análise e visualização dos dados coletados.
 
 ## Como Usar
