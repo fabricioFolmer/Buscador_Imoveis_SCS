@@ -1,197 +1,380 @@
-import requests
+import streamlit.components.v1 as components
+import streamlit as st
 import pandas as pd
-import logging
-from typing import List, Dict, Any, Optional
+import os
 
-# Configura o logging básico
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configuração da página
+st.set_page_config(layout="wide", page_title="Imóveis em Santa Cruz do Sul", page_icon="🏠")
 
-class RealEstateAPIScraper:
+
+@st.cache_data
+def load_data(file_path):
     """
-    Uma classe para extrair dados imobiliários de sites que compartilham uma estrutura de API comum.
-
-    Este scraper busca dados de imóveis de um domínio especificado, extrai detalhes relevantes
-    e retorna os dados como uma lista de dicionários.
+    Carrega os dados do arquivo Parquet e faz um pré-processamento básico.
     """
+    if not os.path.exists(file_path):
+        import Scraper
+        Scraper.update_scraped_data()
+        if not os.path.exists(file_path):
+            st.error(f"Erro: O arquivo '{file_path}' não foi encontrado após a atualização. Verifique se o scraper foi executado corretamente.")
+            return pd.DataFrame()
+    else:
+        data = pd.read_parquet(file_path)
+    
+    # Garante que as colunas numéricas sejam do tipo float
+    for col in ['bedrooms', 'bathrooms', 'parking_spaces', 'private_area_m2', 'price', 'latitude', 'longitude']:
+        data[col] = pd.to_numeric(data[col], errors='coerce')
+    # Remove linhas onde colunas essenciais são nulas
+    data.dropna(subset=['id', 'price', 'city', 'neighborhood'], inplace=True) # TODO Review
+    return data
 
-    def __init__(self, domain_name: str):
-        """
-        Inicializa o scraper com o domínio de destino.
 
-        Args:
-            domain_name (str): O nome de domínio do site imobiliário
-                               (ex: "barbianimoveis.com.br").
-        """
-        if not domain_name:
-            raise ValueError("O nome de domínio não pode estar vazio.")
-        self.domain_name = domain_name
-        self.base_api_url = f"https://www.{self.domain_name}/api/frontend/real-estate-data/property/list"
-        self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        })
+def get_unique_sorted_values(series):
+    """
+    Retorna uma lista de valores únicos e ordenados de uma série Pandas, tratando nulos.
+    """
+    return sorted(series.dropna().unique())
 
-    def _fetch_page_data(self, offset: int) -> Optional[List[Dict[str, Any]]]:
-        """
-        Busca uma única página de dados de imóveis da API.
 
-        Args:
-            offset (int): O deslocamento inicial para a paginação.
+def float_to_str(value: float, decimals: int) -> str:
+    if pd.notna(value):
+        return f"{value:,.{decimals}f}".replace(',', ';').replace('.', ',').replace(';', '.')
+    return ''
 
-        Returns:
-            Optional[List[Dict[str, Any]]]: Uma lista de itens de imóveis da resposta da API,
-                                            ou None se a solicitação falhar.
-        """
-        params = {'offset': offset}
-        try:
-            response = self.session.get(self.base_api_url, params=params, timeout=15)
-            response.raise_for_status()  # Lança um HTTPError para respostas ruins (4xx ou 5xx)
-            data = response.json()
-            return data.get("items")
-        except requests.exceptions.RequestException as e:
-            logging.error(f"A requisição para {self.domain_name} com offset {offset} falhou: {e}")
-        except ValueError: # Captura erros de decodificação JSON
-            logging.error(f"Falha ao decodificar JSON para {self.domain_name} com offset {offset}.")
-        return None
 
-    def _parse_property_data(self, prop: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Analisa com segurança um único objeto JSON de imóvel para extrair os campos necessários.
+def main():
+    """
+    Função principal que executa a aplicação Streamlit.
+    """
+    # Carregamento dos dados
+    df = load_data('data\\all_properties.parquet')
+    if df.empty:
+        return
 
-        Args:
-            prop (Dict[str, Any]): O dicionário que representa um único imóvel.
+    # --- PAINEL DE FILTROS (SIDEBAR) ---
+    with st.sidebar:
+        st.title("Filtros")
 
-        Returns:
-            Um dicionário com os dados extraídos.
-        """
-        # Extração segura usando .get() para evitar KeyError
-        address = prop.get("address", {})
-        coordinate = address.get("coordinate", {})
-        private_area = prop.get("privateArea", {})
-        contracts = prop.get("contracts", [])
-        images = prop.get("images", [])
+        # Ordenação
+        sort_order = st.selectbox("Ordenar por Preço", ["Menor para o Maior", "Maior para o Menor"])
+        ascending_order = sort_order == "Menor para o Maior"
 
-        # Extrai o preço com segurança, convertendo de centavos para um valor decimal
-        price_value = None
-        if contracts and isinstance(contracts, list) and contracts[0] and 'price' in contracts[0]:
-            price_data = contracts[0].get('price', {})
-            if price_data and 'value' in price_data:
-                try:
-                    price_value = float(price_data['value']) / 100
-                except (ValueError, TypeError):
-                    price_value = None # Lida com valores de preço não numéricos
+        # Filtro de Cidade
+        cities = get_unique_sorted_values(df['city'])
+        default_city_index = cities.index("Santa Cruz do Sul") if "Santa Cruz do Sul" in cities else 0
+        selected_city = st.selectbox(
+            "Cidade",
+            options=cities,
+            index=default_city_index
+        )
 
-        # Constrói a URL completa do imóvel
-        property_url_path = prop.get("url")
-        full_property_url = f"https://www.{self.domain_name}{property_url_path}" if property_url_path else None
+        # Filtro de Tipo (com valor padrão)
+        types = get_unique_sorted_values(df['type'])
+        default_type_index = types.index("Apartamento") if "Apartamento" in types else 0
+        selected_type = st.selectbox(
+            "Tipo",
+            options=types,
+            index=default_type_index
+        )
+
+        # Filtros aplicados à cidade e tipo para gerar opções dinâmicas
+        df_filtered_for_options = df[
+            df['city'].str.contains(selected_city, case=False, na=False) &
+            df['type'].str.contains(selected_type, case=False, na=False)
+        ]
         
-        # Extrai todas as URLs de imagem e as une com um separador
-        image_urls = [img.get("src") for img in images if img and img.get("src")]
-        all_image_urls = " | ".join(image_urls) if image_urls else None
+        # Filtro de Preço
+        min_price, max_price = float(df_filtered_for_options['price'].min()), float(df_filtered_for_options['price'].max())
+        price_range = st.slider(
+            "Preço (R$)",
+            min_value=100000.0,
+            max_value=500000.0,
+            value=(100000.0, 500000.0),
+            format="R$ %d",
+            step=5000.0
+        )
 
-        return {
-            "domain": self.domain_name,
-            "id": prop.get("id"),
-            "code": prop.get("code"),
-            "title": prop.get("title"),
-            "description": prop.get("description"),
-            "type": prop.get("type"),
-            "exclusivity": prop.get("exclusivity"),
-            "neighborhood": address.get("neighborhood"),
-            "city": address.get("city"),
-            "bedrooms": prop.get("bedrooms"),
-            "bathrooms": prop.get("bathrooms"),
-            "parking_spaces": prop.get("garage"),
-            "private_area_m2": private_area.get("value"),
-            "price": price_value,
-            "latitude": coordinate.get("latitude"),
-            "longitude": coordinate.get("longitude"),
-            "image_urls": all_image_urls,
-            "property_url": full_property_url,
-        }
+        # Filtro de Área Privativa
+        min_area, max_area = float(df_filtered_for_options['private_area_m2'].min()), float(df_filtered_for_options['private_area_m2'].max())
+        area_range = st.slider(
+            "Área Privativa (m²)",
+            min_value=min_area,
+            max_value=max_area,
+            value=(min_area, max_area),
+            format="%d",
+            step=1.0
+        )
 
-    def fetch_properties(self) -> List[Dict[str, Any]]:
-        """
-        Orquestra o processo de scraping para o domínio, buscando todas as páginas e
-        processando os dados.
+        # Filtro de Quartos
+        bedroom_options = sorted(df_filtered_for_options['bedrooms'].dropna().unique().astype(int))
+        bedroom_options_str = [str(b) for b in bedroom_options if b < 4]
+        if any(b >= 4 for b in bedroom_options):
+            bedroom_options_str.append("4+")
+        selected_bedrooms = st.multiselect("Quartos", options=bedroom_options_str)
 
-        Returns:
-            List[Dict[str, Any]]: Uma lista de todos os imóveis analisados para o domínio.
-        """
-        logging.info(f"Iniciando o scraper para {self.domain_name}...")
-        all_properties = []
-        offset = 0
-        page_count = 1
+        # Filtro de Banheiros
+        bathroom_options = sorted(df_filtered_for_options['bathrooms'].dropna().unique().astype(int))
+        bathroom_options_str = [str(b) for b in bathroom_options if b < 4]
+        if any(b >= 4 for b in bathroom_options):
+            bathroom_options_str.append("4+")
+        selected_bathrooms = st.multiselect("Banheiros", options=bathroom_options_str)
 
-        while True:
-            logging.info(f"Buscando página {page_count} para {self.domain_name} com offset {offset}...")
-            items = self._fetch_page_data(offset)
+        # Filtro de Vagas de Garagem
+        parking_options = sorted(df_filtered_for_options['parking_spaces'].dropna().unique().astype(int))
+        parking_options_str = [str(p) for p in parking_options if p < 4]
+        if any(p >= 4 for p in parking_options):
+            parking_options_str.append("4+")
+        selected_parking = st.multiselect("Vagas de Garagem", options=parking_options_str)
 
-            if items is None: # Ocorreu um erro
-                logging.error(f"Interrompendo a extração para {self.domain_name} devido a um erro na busca.")
-                break
+        # Filtro de Bairro
+        neighborhoods = get_unique_sorted_values(df_filtered_for_options['neighborhood'])
+        selected_neighborhoods = st.multiselect("Bairros", options=neighborhoods)
+
+    # --- LÓGICA DE FILTRAGEM ---
+    if True:
+        df_filtered = df.copy()
+
+        # Aplica filtros sequencialmente
+        df_filtered = df_filtered[df_filtered['city'].str.contains(selected_city, case=False, na=False)]
+        if selected_type:
+            df_filtered = df_filtered[df_filtered['type'].str.contains(selected_type, case=False, na=False)]
+        df_filtered = df_filtered[df_filtered['price'].between(price_range[0], price_range[1])]
+        df_filtered = df_filtered[df_filtered['private_area_m2'].between(area_range[0], area_range[1])]
+
+        if selected_neighborhoods:
+            df_filtered = df_filtered[df_filtered['neighborhood'].isin(selected_neighborhoods)]
+
+        if selected_bedrooms:
+            bedroom_conditions = pd.Series([False] * len(df_filtered), index=df_filtered.index)
+            if "4+" in selected_bedrooms:
+                bedroom_conditions |= (df_filtered['bedrooms'] >= 4)
+            numeric_bedrooms = [int(b) for b in selected_bedrooms if b.isdigit()]
+            if numeric_bedrooms:
+                bedroom_conditions |= (df_filtered['bedrooms'].isin(numeric_bedrooms))
+            df_filtered = df_filtered[bedroom_conditions]
+
+        if selected_bathrooms:
+            bathroom_conditions = pd.Series([False] * len(df_filtered), index=df_filtered.index)
+            if "4+" in selected_bathrooms:
+                bathroom_conditions |= (df_filtered['bathrooms'] >= 4)
+            numeric_bathrooms = [int(b) for b in selected_bathrooms if b.isdigit()]
+            if numeric_bathrooms:
+                bathroom_conditions |= (df_filtered['bathrooms'].isin(numeric_bathrooms))
+            df_filtered = df_filtered[bathroom_conditions]
+
+        if selected_parking:
+            parking_conditions = pd.Series([False] * len(df_filtered), index=df_filtered.index)
+            if "4+" in selected_parking:
+                parking_conditions |= (df_filtered['parking_spaces'] >= 4)
+            numeric_parking = [int(p) for p in selected_parking if p.isdigit()]
+            if numeric_parking:
+                parking_conditions |= (df_filtered['parking_spaces'].isin(numeric_parking))
+            df_filtered = df_filtered[parking_conditions]
+
+    # --- VISUALIZAÇÃO PRINCIPAL ---
+#    st.markdown(f"### Imóveis em Santa Cruz do Sul")
+    tab1, tab2 = st.tabs(["Anúncios", "Mapa"])
+
+    with tab1:
+        # --- ABA DE ANÚNCIOS ---        
+        df_sorted = df_filtered.sort_values(by="price", ascending=ascending_order)
+
+        # Paginação
+        items_per_page = 20
+        total_items = len(df_sorted)
+        total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+        
+        # Initialize page_number in session state if not exists
+        if 'page_number' not in st.session_state:
+            st.session_state.page_number = 1
+        
+        # Ensure page_number is within valid range
+        if st.session_state.page_number > total_pages:
+            st.session_state.page_number = total_pages
+        
+        page_number = st.session_state.page_number
+        
+        # Informações de paginação centralizadas
+        st.markdown(f"<div style='text-align: center; margin-bottom: 20px;'>Página {page_number} de {total_pages} | Exibindo {min(items_per_page, total_items - (page_number-1)*items_per_page)} de {total_items} imóveis</div>", unsafe_allow_html=True)
+        
+        start_index = (page_number - 1) * items_per_page
+        end_index = start_index + items_per_page
+        df_paginated = df_sorted.iloc[start_index:end_index]
+
+        # Exibição em cards
+        if df_paginated.empty:
+            st.write("Nenhum imóvel encontrado para os filtros selecionados nesta página.")
+        else:
+            # Criar uma única estrutura de 3 colunas
+            col1, col2, col3 = st.columns(3)
+            cols = [col1, col2, col3]
             
-            if not items: # Fim dos dados
-                logging.info(f"Não foram encontrados mais itens para {self.domain_name}. Extração completa.")
-                break
+            # Distribuir os imóveis nas 3 colunas
+            for idx, (_, row) in enumerate(df_paginated.iterrows()):
+                col_idx = idx % 3  # Determina qual coluna usar (0, 1, ou 2)
+                
+                with cols[col_idx]:
+                    # Obter a primeira imagem ou placeholder
+                    image_urls_str = str(row['image_urls']) if pd.notna(row['image_urls']) else ""
+                    image_urls = image_urls_str.split(' | ') if image_urls_str else []
+                    image_url = image_urls[0] if image_urls and image_urls[0] and image_urls[0] != 'nan' else None
+                    
+                    # Exibir imagem
+                    if image_url:
+                        st.image(image_url, use_container_width=True)
+                    else:
+                        st.markdown("""
+                        <div style="width:100%; height: 200px; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 8px; margin-bottom: 10px;">
+                            <span style="color: #888; font-size: 14px;">Imagem Indisponível</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Cabeçalho com preço e informações básicas
+                    col_price, col_features = st.columns([1, 1])
+                    col_price.markdown(f"**R$ {float_to_str(row['price'], 0)}**")
+                    # Area, Bedrooms, Bathrooms, Parking Spaces
+                    area = f"{float_to_str(row['private_area_m2'], 0)} m²" if pd.notna(row['private_area_m2']) else None
+                    bedrooms = f"🛏️ {float_to_str(row['bedrooms'], 0)}" if pd.notna(row['bedrooms']) else None
+                    bathrooms = f"🚿 {float_to_str(row['bathrooms'], 0)}" if pd.notna(row['bathrooms']) else None
+                    parking_spaces = f"🚗 {float_to_str(row['parking_spaces'], 0)}" if pd.notna(row['parking_spaces']) else None
+                    col_features.markdown(f"<div style='text-align: right;'>{' | '.join(filter(None, [area, bedrooms, bathrooms, parking_spaces]))}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<a href='{row['property_url']}' target='_blank' style='text-decoration: none; color: inherit;'>📍 {row['neighborhood']}, {row['city']} 🔗</a>", unsafe_allow_html=True)
+                    
+                    # Mostrar descrição do anúncio sempre visível
+                    if pd.notna(row['description']) or pd.notna(row['title']):
+                        with st.expander("Descrição do Anúncio", expanded=False):
+                            if pd.notna(row['title']):
+                                st.markdown(f"**{row['title']}**")
+                            if pd.notna(row['description']):
+                                st.write(row['description'])
+                    
+                    
+                    st.markdown("---")
+            
+            # Controles de paginação na parte inferior
+            st.markdown("---")
+            col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+            
+            with col1:
+                if st.button("⏮️ Primeira", disabled=(page_number == 1), use_container_width=True):
+                    st.session_state.page_number = 1
+                    st.rerun()
+            
+            with col2:
+                if st.button("⬅️ Anterior", disabled=(page_number == 1), use_container_width=True):
+                    st.session_state.page_number = max(1, page_number - 1)
+                    st.rerun()
+            
+            with col3:
+                st.markdown(f"<div style='text-align: center; padding: 8px; background-color: #f0f2f6; border-radius: 5px; margin: 0 10px;'>Página {page_number} de {total_pages}</div>", unsafe_allow_html=True)
+            
+            with col4:
+                if st.button("Próxima ➡️", disabled=(page_number == total_pages), use_container_width=True):
+                    st.session_state.page_number = min(total_pages, page_number + 1)
+                    st.rerun()
+            
+            with col5:
+                if st.button("Última ⏭️", disabled=(page_number == total_pages), use_container_width=True):
+                    st.session_state.page_number = total_pages
+                    st.rerun()
 
-            for prop in items:
-                parsed_data = self._parse_property_data(prop)
-                if parsed_data:
-                    all_properties.append(parsed_data)
-
-            offset += 8
-            page_count += 1
+    with tab2:
+        # --- ABA DE MAPA ---
+        df_map = df_filtered.dropna(subset=['latitude', 'longitude'])
         
-        return all_properties
+        if df_map.empty:
+            st.write("Nenhum imóvel com coordenadas válidas para exibir no mapa.")
+        else:
+            # Preparando dados para o popup do mapa com formatação brasileira
+            def create_popup(row):
+                # Obter a primeira imagem ou usar placeholder
+                image_urls_str = str(row['image_urls']) if pd.notna(row['image_urls']) else ""
+                image_urls = image_urls_str.split(' | ') if image_urls_str else []
+                image_url = image_urls[0] if image_urls and image_urls[0] and image_urls[0] != 'nan' else None
+                
+                # Formatação do preço em estilo brasileiro
+                price_formatted = f"R$ {float_to_str(row['price'], 0)}"
+                # Outros dados do imóvel - Area, Bedrooms, Bathrooms, Parking Spaces
+                area = f"{float_to_str(row['private_area_m2'], 0)} m²" if pd.notna(row['private_area_m2']) else None
+                bedrooms = f"🛏️ {float_to_str(row['bedrooms'], 0)}" if pd.notna(row['bedrooms']) else None
+                parking_spaces = f"🚗 {float_to_str(row['parking_spaces'], 0)}" if pd.notna(row['parking_spaces']) else None
+                dados = ' | '.join(filter(None, [area, bedrooms, parking_spaces]))
+
+                # Criação do HTML para o popup
+                if image_url:
+                    return f"""
+                        <div style="width: 300px; font-family: Arial, sans-serif;">
+                            <img src="{image_url}" style="width: 100%; max-width: 270px; height: auto; border-radius: 5px; margin-bottom: 8px;" alt="Imagem do imóvel">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <div style="font-weight: bold; font-size: 16px;">{price_formatted}</div>
+                                <div style="font-size: 13px; text-align: right;">{dados if dados else ''}</div>
+                            </div>
+                        </div>
+                    """
+                else:
+                    return f"""
+                        <div style="width: 300px; font-family: Arial, sans-serif;">
+                            <div style="width: 100%; height: 150px; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 5px; margin-bottom: 8px; color: #888; font-size: 14px;">
+                                Imagem Indisponível
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <div style="font-weight: bold; font-size: 16px;">{price_formatted}</div>
+                                <div style="font-size: 13px; text-align: right;">{dados if dados else ''}</div>
+                            </div>
+                        </div>
+                    """
+            
+            df_map['popup'] = df_map.apply(create_popup, axis=1)
+            
+
+            # Função para lidar com cliques no mapa
+            def handle_map_selection():
+                if st.session_state.get('code'):
+                    selection = st.session_state.code.get('selection')
+                    if selection and selection.get('objects'):
+                        # Obter a URL da propriedade selecionada
+                        property_url = selection['objects']['code'][0]['property_url']
+                        components.html(f"""
+                            <script>
+                                window.open('{property_url}', '_blank');
+                            </script>
+                        """, height=0)
+
+            st.pydeck_chart(pdk.Deck(
+                map_style='road',  # Usa um estilo que não requer token do Mapbox
+                
+                # Initial view é de Santa Cruz do Sul
+                initial_view_state=pdk.ViewState(
+                    latitude=-29.7175,
+                    longitude=-52.4264,
+                    zoom=11.7,
+                    pitch=0  # Vista superior (sem inclinação) para melhor visualização dos pontos
+                ),
+                
+                layers=[
+                    pdk.Layer(
+                       'ScatterplotLayer',
+                       data=df_map,
+                       get_position='[longitude, latitude]',
+                       get_color='[200, 30, 0, 160]',  # Cor vermelha para os pontos
+                       get_radius=30,  # Raio fixo otimizado para visualização
+                       radius_scale=1,
+                       radius_min_pixels=6,  # Raio mínimo em pixels
+                       radius_max_pixels=30,  # Raio máximo em pixels
+                       pickable=True,
+                       auto_highlight=True,  # Destaca o ponto ao passar o mouse
+                       id='code',  # ID para seleção
+                    ),
+                ],
+                tooltip={"html": "{popup}", "style": {"color": "white", "background": "rgba(0,0,0,0.8)", "border-radius": "5px"}}
+            ), height=680, on_select=handle_map_selection, selection_mode='single-object', key='code')
+            
+# Adiciona PyDeck se necessário para o mapa
+try:
+    import pydeck as pdk
+except ImportError:
+    st.error("A biblioteca PyDeck é necessária para a visualização do mapa. Por favor, instale-a com 'pip install pydeck'.")
 
 
 if __name__ == "__main__":
-    # --- Exemplo de Uso ---
-    # O script irá percorrer esta lista de domínios, executar o scraper para cada um,
-    # e então salvar todos os resultados combinados em um único arquivo CSV.
-    domains_to_scrape = [
-        'imoveisinvest.com', 
-        'imobiliariadcasa.com.br', 
-        'barbianimoveis.com.br', 
-        'oktoberimoveis.com.br', 
-        'borbaimoveis.com.br', 
-        'predilarimoveis.com.br', 
-        'karnoppimoveis.com.br', 
-        'imoveismdm.com.br', 
-        'verenaimoveis.com.br', 
-        'imoveisdasantinha.com.br', 
-        'muranoimobiliaria.com.br', 
-        'imobjardim.com.br', 
-        'imobiliariaimigrante.com.br', 
-        'garbonegociosimobiliarios.com.br'
-    ]
-
-    all_scraped_data = []
-
-    for domain in domains_to_scrape:
-        try:
-            scraper = RealEstateAPIScraper(domain_name=domain)
-            properties = scraper.fetch_properties()
-            if properties:
-                all_scraped_data.extend(properties)
-            logging.info(f"--- Processamento de {domain} finalizado ---\n")
-        except ValueError as e:
-            logging.error(f"Não foi possível criar o scraper para o domínio '{domain}': {e}")
-        except Exception as e:
-            logging.error(f"Ocorreu um erro inesperado ao processar {domain}: {e}")
-
-    if all_scraped_data:
-        logging.info(f"Total de imóveis extraídos de todos os domínios: {len(all_scraped_data)}")
-        
-        # Cria o DataFrame e salva em um único CSV
-        df = pd.DataFrame(all_scraped_data)
-        output_filename = "all_properties.csv"
-
-        try:
-            df.to_csv(output_filename, index=False, encoding='utf-8')
-            logging.info(f"Todos os imóveis foram salvos com sucesso em {output_filename}")
-        except IOError as e:
-            logging.error(f"Falha ao escrever no arquivo CSV {output_filename}: {e}")
-    else:
-        logging.warning("Nenhum imóvel foi extraído de nenhum domínio. O arquivo CSV não será criado.")
+    main()
