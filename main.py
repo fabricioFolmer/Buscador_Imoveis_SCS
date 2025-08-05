@@ -275,15 +275,35 @@ def main():
                 col_idx = idx % 3  # Determina qual coluna usar (0, 1, ou 2)
                 
                 with cols[col_idx]:
-                    # Obter a primeira imagem ou placeholder
+                    # Obter todas as imagens da propriedade
                     image_urls_str = str(row['image_urls']) if pd.notna(row['image_urls']) else ""
-                    image_urls = image_urls_str.split(' | ') if image_urls_str else []
-                    image_url = image_urls[0] if image_urls and image_urls[0] and image_urls[0] != 'nan' else None
+                    image_urls = [url.strip() for url in image_urls_str.split(' | ') if url.strip() and url.strip() != 'nan'] if image_urls_str else []
                     
-                    # Exibir imagem
-                    if image_url:
-                        st.image(image_url, use_container_width=True)
+                    # Identificador único para cada propriedade
+                    property_id = f"property_{row['id']}_{start_index + idx}"
+                    image_key = f"{property_id}_current_image"
+                    
+                    # Inicializar índice da imagem atual se não existir
+                    if image_key not in st.session_state:
+                        st.session_state[image_key] = 0
+                    
+                    # Garantir que o índice esteja dentro dos limites
+                    if image_urls and st.session_state[image_key] >= len(image_urls):
+                        st.session_state[image_key] = 0
+                    
+                    # Exibir imagem sem controles de navegação
+                    if image_urls:
+                        current_img_idx = st.session_state[image_key]
+                        current_image = image_urls[current_img_idx]
+                        
+                        # Exibir imagem
+                        st.image(current_image, use_container_width=True)
+                        
+                        # Indicador de posição das imagens (se houver mais de uma)
+                        if len(image_urls) > 1:
+                            st.markdown(f"<div style='text-align: center; font-size: 12px; color: #666; margin-top: -10px;'>{current_img_idx + 1} / {len(image_urls)}</div>", unsafe_allow_html=True)
                     else:
+                        # Placeholder quando não há imagens
                         st.markdown("""
                         <div style="width:100%; height: 200px; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 8px; margin-bottom: 10px;">
                             <span style="color: #888; font-size: 14px;">Imagem Indisponível</span>
@@ -301,13 +321,36 @@ def main():
                     col_features.markdown(f"<div style='text-align: right;'>{' | '.join(filter(None, [area, bedrooms, bathrooms, parking_spaces]))}</div>", unsafe_allow_html=True)
                     st.markdown(f"<a href='{row['property_url']}' target='_blank' style='text-decoration: none; color: inherit;'>📍 {row['neighborhood']}, {row['city']} 🔗</a>", unsafe_allow_html=True)
                     
-                    # Mostrar descrição do anúncio sempre visível
-                    if pd.notna(row['description']) or pd.notna(row['title']):
-                        with st.expander("Descrição do Anúncio", expanded=False):
-                            if pd.notna(row['title']):
-                                st.markdown(f"**{row['title']}**")
-                            if pd.notna(row['description']):
-                                st.write(row['description'])
+                    # Controles de navegação de imagem na parte inferior (só aparecem se houver mais de uma imagem)
+                    if image_urls and len(image_urls) > 1:
+                        nav_col1, nav_col2, nav_col3 = st.columns([1, 6, 1])
+                        
+                        with nav_col1:
+                            if st.button("◀", key=f"{property_id}_prev", help="Imagem anterior", use_container_width=True):
+                                st.session_state[image_key] = (current_img_idx - 1) % len(image_urls)
+                                st.rerun()
+                        
+                        with nav_col2:
+                            # Mostrar descrição do anúncio na coluna central
+                            if pd.notna(row['description']) or pd.notna(row['title']):
+                                with st.expander("Descrição do Anúncio", expanded=False):
+                                    if pd.notna(row['title']):
+                                        st.markdown(f"**{row['title']}**")
+                                    if pd.notna(row['description']):
+                                        st.write(row['description'])
+                        
+                        with nav_col3:
+                            if st.button("▶", key=f"{property_id}_next", help="Próxima imagem", use_container_width=True):
+                                st.session_state[image_key] = (current_img_idx + 1) % len(image_urls)
+                                st.rerun()
+                    else:
+                        # Se não há navegação de imagem, mostrar descrição normalmente
+                        if pd.notna(row['description']) or pd.notna(row['title']):
+                            with st.expander("Descrição do Anúncio", expanded=False):
+                                if pd.notna(row['title']):
+                                    st.markdown(f"**{row['title']}**")
+                                if pd.notna(row['description']):
+                                    st.write(row['description'])
                     
                     
                     st.markdown("---")

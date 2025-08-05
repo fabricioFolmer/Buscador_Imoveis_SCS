@@ -9,11 +9,12 @@ python -m streamlit run main.py
 
 ## 📋 TO DO List
 - ✅ Improve sidebar filters
-- Add image side scrolling on the cards when there are multiple images
+- ✅ Add image side scrolling on the cards when there are multiple images
 - Show total and usable area in the cards
 - Scrape and show
     - Actual listing description
     - Section "comodidades do imovel"
+- Improve image side scrolling behaviour / user experience
 
 ## Visão Geral
 Esse é um projeto desenvolvido para automatizar a coleta de dados imobiliários de sites que compartilham uma estrutura de API comum. O projeto oferece duas abordagens de coleta de dados:
