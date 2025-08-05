@@ -12,14 +12,25 @@ def load_data(file_path):
     """
     Carrega os dados do arquivo Parquet e faz um pré-processamento básico.
     """
+    
+    # Se o arquivo não existir, executa o scraper para atualizá-lo
     if not os.path.exists(file_path):
         import Scraper
         Scraper.update_scraped_data()
         if not os.path.exists(file_path):
             st.error(f"Erro: O arquivo '{file_path}' não foi encontrado após a atualização. Verifique se o scraper foi executado corretamente.")
             return pd.DataFrame()
-    else:
-        data = pd.read_parquet(file_path)
+    
+    # Se o arquivo existir, verifica se foi modificado hoje. Se não, executa o scraper novamente
+    if os.path.exists(file_path) and pd.to_datetime(os.path.getmtime(file_path), unit='s').date() != pd.to_datetime('today').date():
+        import Scraper
+        Scraper.update_scraped_data()
+        if not os.path.exists(file_path):
+            st.error(f"Erro: O arquivo '{file_path}' não foi encontrado após a atualização. Verifique se o scraper foi executado corretamente.")
+            return pd.DataFrame()
+    
+    # Carrega os dados do arquivo Parquet    
+    data = pd.read_parquet(file_path)
     
     # Garante que as colunas numéricas sejam do tipo float
     for col in ['bedrooms', 'bathrooms', 'parking_spaces', 'private_area_m2', 'price', 'latitude', 'longitude']:

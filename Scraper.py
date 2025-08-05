@@ -1,7 +1,8 @@
-import requests
-import pandas as pd
-import logging
 from typing import List, Dict, Any, Optional
+import pandas as pd
+import requests
+import logging
+import os
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -151,6 +152,7 @@ def update_scraped_data():
     Função principal para executar o scraper em uma lista de domínios e salvar os resultados em um CSV.
     """
     logging.info("Iniciando o processo de scraping para múltiplos domínios...")
+    os.makedirs("data", exist_ok=True)
 
     # Lista de domínios a serem processados
     domains_to_scrape = [
