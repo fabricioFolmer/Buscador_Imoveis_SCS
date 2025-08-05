@@ -70,6 +70,15 @@ def main():
         sort_order = st.selectbox("Ordenar por Preço", ["Menor para o Maior", "Maior para o Menor"])
         ascending_order = sort_order == "Menor para o Maior"
 
+        # Filtro de Tipo (multiselect)
+        types = get_unique_sorted_values(df['type'])
+        default_types = ["Apartamento"] if "Apartamento" in types else []
+        selected_types = st.multiselect(
+            "Tipo",
+            options=types,
+            default=default_types
+        )
+
         # Filtro de Cidade
         cities = get_unique_sorted_values(df['city'])
         default_city_index = cities.index("Santa Cruz do Sul") if "Santa Cruz do Sul" in cities else 0
@@ -79,67 +88,103 @@ def main():
             index=default_city_index
         )
 
-        # Filtro de Tipo (com valor padrão)
-        types = get_unique_sorted_values(df['type'])
-        default_type_index = types.index("Apartamento") if "Apartamento" in types else 0
-        selected_type = st.selectbox(
-            "Tipo",
-            options=types,
-            index=default_type_index
-        )
-
-        # Filtros aplicados à cidade e tipo para gerar opções dinâmicas
+        # Filtros aplicados à cidade e tipos para gerar opções dinâmicas
         df_filtered_for_options = df[
-            df['city'].str.contains(selected_city, case=False, na=False) &
-            df['type'].str.contains(selected_type, case=False, na=False)
+            df['city'].str.contains(selected_city, case=False, na=False)
         ]
         
-        # Filtro de Preço
-        min_price, max_price = float(df_filtered_for_options['price'].min()), float(df_filtered_for_options['price'].max())
-        price_range = st.slider(
-            "Preço (R$)",
-            min_value=100000.0,
-            max_value=500000.0,
-            value=(100000.0, 500000.0),
-            format="R$ %d",
-            step=5000.0
-        )
-
-        # Filtro de Área Privativa
-        min_area, max_area = float(df_filtered_for_options['private_area_m2'].min()), float(df_filtered_for_options['private_area_m2'].max())
-        area_range = st.slider(
-            "Área Privativa (m²)",
-            min_value=min_area,
-            max_value=max_area,
-            value=(min_area, max_area),
-            format="%d",
-            step=1.0
-        )
-
-        # Filtro de Quartos
-        bedroom_options = sorted(df_filtered_for_options['bedrooms'].dropna().unique().astype(int))
-        bedroom_options_str = [str(b) for b in bedroom_options if b < 4]
-        if any(b >= 4 for b in bedroom_options):
-            bedroom_options_str.append("4+")
-        selected_bedrooms = st.multiselect("Quartos", options=bedroom_options_str)
-
-        # Filtro de Banheiros
-        bathroom_options = sorted(df_filtered_for_options['bathrooms'].dropna().unique().astype(int))
-        bathroom_options_str = [str(b) for b in bathroom_options if b < 4]
-        if any(b >= 4 for b in bathroom_options):
-            bathroom_options_str.append("4+")
-        selected_bathrooms = st.multiselect("Banheiros", options=bathroom_options_str)
-
-        # Filtro de Vagas de Garagem
-        parking_options = sorted(df_filtered_for_options['parking_spaces'].dropna().unique().astype(int))
-        parking_options_str = [str(p) for p in parking_options if p < 4]
-        if any(p >= 4 for p in parking_options):
-            parking_options_str.append("4+")
-        selected_parking = st.multiselect("Vagas de Garagem", options=parking_options_str)
+        if selected_types:
+            type_conditions = pd.Series([False] * len(df_filtered_for_options), index=df_filtered_for_options.index)
+            for selected_type in selected_types:
+                type_conditions |= df_filtered_for_options['type'].str.contains(selected_type, case=False, na=False)
+            df_filtered_for_options = df_filtered_for_options[type_conditions]
 
         # Filtro de Bairro
         neighborhoods = get_unique_sorted_values(df_filtered_for_options['neighborhood'])
         selected_neighborhoods = st.multiselect("Bairros", options=neighborhoods)
+        
+        # Filtro de Preço
+        st.markdown("**Preço (R$)**")
+        col1, col2 = st.columns(2)
+        with col1:
+            min_price = st.number_input(
+                "Mínimo", 
+                min_value=0.0, 
+                value=100000.0, 
+                step=10000.0,
+                format="%.0f",
+                key="min_price"
+            )
+        with col2:
+            max_price = st.number_input(
+                "Máximo", 
+                min_value=0.0, 
+                value=500000.0, 
+                step=10000.0,
+                format="%.0f",
+                key="max_price"
+            )
+        
+        # Create price range tuple for compatibility with existing filtering logic
+        price_range = (min_price, max_price)
+
+        # Filtro de Área Privativa
+#        min_area, max_area = float(df_filtered_for_options['private_area_m2'].min()), float(df_filtered_for_options['private_area_m2'].max())
+#        area_range = st.slider(
+#            "Área Privativa (m²)",
+#            min_value=min_area,
+#            max_value=max_area,
+#            value=(min_area, max_area),
+#            format="%d",
+#            step=1.0
+#        )
+        st.markdown("**Área Privativa (m²)**")
+        col1, col2 = st.columns(2)
+        with col1:
+            min_area = st.number_input(
+                "Mínimo", 
+                min_value=0.0,
+                value=30.0,
+                step=5.0,
+                format="%.0f",
+                key="min_area"
+            )
+        with col2:
+            max_area = st.number_input(
+                "Máximo", 
+                min_value=0.0, 
+                value=200.0, 
+                step=5.0,
+                format="%.0f",
+                key="max_area"
+            )
+        
+        # Create area range tuple for compatibility with existing filtering logic
+        area_range = (min_area, max_area)
+
+        # Filtro de Quartos
+        selected_bedrooms = st.pills(
+            "Quartos",
+            options=["1", "2", "3", "4+"],
+            selection_mode="multi",
+            key="bedrooms_filter"
+        )
+
+        # Filtro de Banheiros
+        selected_bathrooms = st.pills(
+            "Banheiros",
+            options=["1", "2", "3", "4+"],
+            selection_mode="multi",
+            key="bathrooms_filter"
+        )
+
+        # Filtro de Vagas de Garagem
+        selected_parking = st.pills(
+            "Vagas de Garagem",
+            options=["0", "1", "2", "3", "4+"],
+            selection_mode="multi",
+            key="parking_filter"
+        )
 
     # --- LÓGICA DE FILTRAGEM ---
     if True:
@@ -147,8 +192,13 @@ def main():
 
         # Aplica filtros sequencialmente
         df_filtered = df_filtered[df_filtered['city'].str.contains(selected_city, case=False, na=False)]
-        if selected_type:
-            df_filtered = df_filtered[df_filtered['type'].str.contains(selected_type, case=False, na=False)]
+        
+        if selected_types:
+            type_conditions = pd.Series([False] * len(df_filtered), index=df_filtered.index)
+            for selected_type in selected_types:
+                type_conditions |= df_filtered['type'].str.contains(selected_type, case=False, na=False)
+            df_filtered = df_filtered[type_conditions]
+            
         df_filtered = df_filtered[df_filtered['price'].between(price_range[0], price_range[1])]
         df_filtered = df_filtered[df_filtered['private_area_m2'].between(area_range[0], area_range[1])]
 

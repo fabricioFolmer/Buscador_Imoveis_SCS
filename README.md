@@ -8,9 +8,8 @@ python -m streamlit run main.py
 ```
 
 ## 📋 TO DO List
-- Improve sidebar filters
+- ✅ Improve sidebar filters
 - Add image side scrolling on the cards when there are multiple images
-- Add a button to reset all filters
 - Show total and usable area in the cards
 - Scrape and show
     - Actual listing description
