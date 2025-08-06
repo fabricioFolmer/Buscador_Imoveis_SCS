@@ -311,7 +311,7 @@ def main():
                         """, unsafe_allow_html=True)
                     
                     # Cabeçalho com preço e informações básicas
-                    col_price, col_features = st.columns([1, 1])
+                    col_price, col_features = st.columns([2, 4])
                     col_price.markdown(f"**R$ {float_to_str(row['price'], 0)}**")
                     # Area, Bedrooms, Bathrooms, Parking Spaces
                     area = f"{float_to_str(row['private_area_m2'], 0)} m²" if pd.notna(row['private_area_m2']) else None
