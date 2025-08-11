@@ -2,9 +2,90 @@ import streamlit.components.v1 as components
 import streamlit as st
 import pandas as pd
 import os
+import json
 
 # Configuração da página
 st.set_page_config(layout="wide", page_title="Imóveis em Santa Cruz do Sul", page_icon="🏠")
+
+# Tag definitions
+TAG_OPTIONS = {
+    "potential": {"label": "💡 Potencial", "color": "#28a745"},
+    "favorite": {"label": "❤️ Favorito", "color": "#dc3545"},
+    "discarded": {"label": "❌ Descartado", "color": "#6c757d"}
+}
+
+def init_user_tags():
+    """Initialize user tags in session state and load from file."""
+    if 'user_tags' not in st.session_state:
+        st.session_state.user_tags = {}
+        # Load existing tags from file
+        load_tags_from_file()
+
+def get_tags_file_path():
+    """Get the path for the user tags file."""
+    return os.path.join('data', 'user_tags.json')
+
+def load_tags_from_file():
+    """Load user tags from a local file."""
+    tags_file = get_tags_file_path()
+    if os.path.exists(tags_file):
+        try:
+            with open(tags_file, 'r', encoding='utf-8') as f:
+                loaded_tags = json.load(f)
+                if isinstance(loaded_tags, dict):
+                    st.session_state.user_tags = loaded_tags
+                    # Show a small success message in the sidebar later
+                    st.session_state.tags_loaded_count = len(loaded_tags)
+        except Exception as e:
+            st.sidebar.error(f"Could not load saved tags: {e}")
+
+def save_tags_to_file():
+    """Save user tags to a local file."""
+    if st.session_state.user_tags:
+        tags_file = get_tags_file_path()
+        # Ensure data directory exists
+        os.makedirs(os.path.dirname(tags_file), exist_ok=True)
+        
+        try:
+            with open(tags_file, 'w', encoding='utf-8') as f:
+                json.dump(st.session_state.user_tags, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            st.error(f"Could not save tags to file: {e}")
+
+def save_user_tags():
+    """Save user tags to both localStorage and file."""
+    # Save to file (more reliable)
+    save_tags_to_file()
+    
+    # Also try localStorage for immediate availability
+    if st.session_state.user_tags:
+        tags_json = json.dumps(st.session_state.user_tags)
+        # Escape the JSON for JavaScript
+        escaped_json = tags_json.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"')
+        
+        save_tags_js = f"""
+        <script>
+            try {{
+                localStorage.setItem('property_tags', '{escaped_json}');
+                console.log('Tags saved to localStorage successfully');
+            }} catch(e) {{
+                console.log('Could not save to localStorage:', e);
+            }}
+        </script>
+        """
+        components.html(save_tags_js, height=0)
+
+def get_property_tag(property_id):
+    """Get the tag for a specific property."""
+    return st.session_state.user_tags.get(str(property_id), None)
+
+def set_property_tag(property_id, tag):
+    """Set a tag for a specific property."""
+    if tag is None:
+        st.session_state.user_tags.pop(str(property_id), None)
+    else:
+        st.session_state.user_tags[str(property_id)] = tag
+    save_user_tags()
 
 
 @st.cache_data
@@ -57,6 +138,9 @@ def main():
     """
     Função principal que executa a aplicação Streamlit.
     """
+    # Initialize user tags first (before any sidebar access)
+    init_user_tags()
+    
     # Carregamento dos dados
     df = load_data('data\\all_properties.parquet')
     if df.empty:
@@ -186,6 +270,31 @@ def main():
             key="parking_filter"
         )
 
+        # Filtro de Tags do Usuário
+        st.markdown("---")
+        st.markdown("**🏷️ Minhas Tags**")
+        
+        # Checkbox para mostrar descartados
+        show_discarded = st.checkbox("Mostrar Descartados", value=False, help="Por padrão, imóveis marcados como descartados ficam ocultos")
+        
+        # Multiselect para filtrar por tags específicas
+        tag_labels = [TAG_OPTIONS[key]["label"] for key in TAG_OPTIONS.keys()]
+        selected_tag_labels = st.multiselect(
+            "Filtrar por Tags",
+            options=["Todos"] + tag_labels,
+            default=["Todos"],
+            help="Selecione as tags que deseja visualizar"
+        )
+        
+        # Convert labels back to tag keys
+        selected_tag_keys = []
+        if "Todos" not in selected_tag_labels:
+            for label in selected_tag_labels:
+                for key, tag_info in TAG_OPTIONS.items():
+                    if tag_info["label"] == label:
+                        selected_tag_keys.append(key)
+                        break
+
     # --- LÓGICA DE FILTRAGEM ---
     if True:
         df_filtered = df.copy()
@@ -231,6 +340,22 @@ def main():
             if numeric_parking:
                 parking_conditions |= (df_filtered['parking_spaces'].isin(numeric_parking))
             df_filtered = df_filtered[parking_conditions]
+
+        # Filtro de Tags do Usuário
+        if not show_discarded:
+            # Por padrão, ocultar imóveis marcados como descartados
+            discarded_ids = [prop_id for prop_id, tag in st.session_state.user_tags.items() if tag == "discarded"]
+            if discarded_ids:
+                df_filtered = df_filtered[~df_filtered['id'].astype(str).isin(discarded_ids)]
+        
+        if selected_tag_keys:
+            # Filtrar apenas imóveis com as tags selecionadas
+            tagged_ids = [prop_id for prop_id, tag in st.session_state.user_tags.items() if tag in selected_tag_keys]
+            if tagged_ids:
+                df_filtered = df_filtered[df_filtered['id'].astype(str).isin(tagged_ids)]
+            else:
+                # Se não há imóveis com essas tags, mostrar dataframe vazio
+                df_filtered = df_filtered.iloc[0:0]
 
     # --- VISUALIZAÇÃO PRINCIPAL ---
 #    st.markdown(f"### Imóveis em Santa Cruz do Sul")
@@ -351,6 +476,34 @@ def main():
                                     st.markdown(f"**{row['title']}**")
                                 if pd.notna(row['description']):
                                     st.write(row['description'])
+                    
+                    # Sistema de Tags do Usuário
+                    st.markdown("---")
+                    current_tag = get_property_tag(row['id'])
+                    
+                    # Display current tag if exists
+                    if current_tag:
+                        tag_info = TAG_OPTIONS[current_tag]
+                        st.markdown(f"<div style='background-color: {tag_info['color']}15; border-left: 3px solid {tag_info['color']}; padding: 5px 10px; margin-bottom: 10px; border-radius: 3px;'><small>{tag_info['label']}</small></div>", unsafe_allow_html=True)
+                    
+                    # Tag selection buttons in a compact layout
+                    tag_cols = st.columns(len(TAG_OPTIONS))
+                    for i, (tag_key, tag_info) in enumerate(TAG_OPTIONS.items()):
+                        with tag_cols[i]:
+                            is_current = current_tag == tag_key
+                            button_style = "primary" if is_current else "secondary"
+                            
+                            if st.button(
+                                tag_info["label"].split()[-1],  # Just the text part, no emoji for space
+                                key=f"tag_{property_id}_{tag_key}",
+                                help=tag_info["label"],
+                                use_container_width=True,
+                                type=button_style
+                            ):
+                                # Toggle tag: remove if same, set if different
+                                new_tag = None if is_current else tag_key
+                                set_property_tag(row['id'], new_tag)
+                                st.rerun()
                     
                     
                     st.markdown("---")

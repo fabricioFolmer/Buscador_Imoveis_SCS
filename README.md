@@ -10,6 +10,7 @@ python -m streamlit run main.py
 ## 📋 TO DO List
 - ✅ Improve sidebar filters
 - ✅ Add image side scrolling on the cards when there are multiple images
+- ✅ Add user tagging system (potential, favorite, discarded)
 - Show total and usable area in the cards
 - Scrape and show
     - Actual listing description
@@ -56,7 +57,8 @@ Real_Estate_Scraper/
 ├── data/                      # Dados processados
 │   ├── all_properties.csv     # Dados em CSV
 │   ├── all_properties.parquet # Dados em Parquet
-│   └── all_data_frontend.csv  # Dados do Selenium
+│   ├── all_data_frontend.csv  # Dados do Selenium
+│   └── user_tags.json         # Tags dos usuários
 └── __pycache__/              # Cache Python
 ```
 
@@ -88,6 +90,15 @@ Os arquivos CSV gerados contêm os seguintes campos:
 ## Interface Web
 
 ### Funcionalidades da Interface
+
+#### Sistema de Tags do Usuário 🏷️
+- **Tags Disponíveis**: 
+  - 💡 **Potencial**: Imóveis com potencial de interesse
+  - ❤️ **Favorito**: Imóveis marcados como favoritos
+  - ❌ **Descartado**: Imóveis descartados (ocultos por padrão)
+- **Persistência**: Tags são salvas localmente em arquivo JSON
+- **Filtros**: Filtrar visualização por tags específicas
+- **Ocultação Automática**: Imóveis descartados ficam ocultos por padrão
 
 #### Painel de Filtros (Sidebar)
 - **Ordenação**: Por preço (crescente/decrescente)
